@@ -121,6 +121,38 @@ returns table (
 $$;
 
 -- ============================================================
+-- Trigger: crea el perfil automáticamente cuando se crea un usuario
+-- en auth.users (con "security definer" corre con privilegios de
+-- superusuario, así que no depende de que ya exista una sesión ni
+-- de las políticas de RLS). Esto es lo que evita el error al
+-- registrarse cuando la confirmación de email está activada: como
+-- todavía no hay sesión en ese momento, el insert de "profiles"
+-- hecho desde el cliente fallaba por RLS.
+-- nombre y role se mandan como metadata en supabase.auth.signUp().
+-- ============================================================
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, nombre, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'nombre', 'Sin nombre'),
+    coalesce((new.raw_user_meta_data->>'role')::user_role, 'jugador')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ============================================================
 -- Row Level Security
 -- ============================================================
 alter table profiles enable row level security;
