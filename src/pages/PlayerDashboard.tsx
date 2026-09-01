@@ -13,7 +13,17 @@ export default function PlayerDashboard() {
   const { signOut } = useAuth()
   const { coords, error: geoError, loading: geoLoading } = useGeolocation()
   const [canchas, setCanchas] = useState<CanchaCercana[]>([])
-  const [radioKm, setRadioKm] = useState(15)
+  const [radioKm, setRadioKm] = useState(5)
+  const [panelRadioAbierto, setPanelRadioAbierto] = useState(false)
+
+  // Búsqueda por nombre (independiente del radio, busca entre todas las canchas activas)
+  const [busqueda, setBusqueda] = useState('')
+  const [buscando, setBuscando] = useState(false)
+  const [resultadosBusqueda, setResultadosBusqueda] = useState<CanchaCercana[]>([])
+  // Cuando el jugador elige un resultado de búsqueda, centramos el mapa ahí
+  // aunque esté fuera del radio de búsqueda por ubicación.
+  const [foco, setFoco] = useState<{ lat: number; lng: number } | null>(null)
+
   const [seleccionada, setSeleccionada] = useState<CanchaCercana | null>(null)
   const [canchaCompleta, setCanchaCompleta] = useState<Cancha | null>(null)
   const [turnos, setTurnos] = useState<Turno[]>([])
@@ -36,8 +46,30 @@ export default function PlayerDashboard() {
       })
   }, [coords, radioKm])
 
+  // Búsqueda por nombre con debounce
+  useEffect(() => {
+    if (busqueda.trim().length < 2) {
+      setResultadosBusqueda([])
+      return
+    }
+    setBuscando(true)
+    const id = setTimeout(() => {
+      supabase
+        .rpc('buscar_canchas_por_nombre', { query: busqueda.trim() })
+        .then(({ data, error }) => {
+          setBuscando(false)
+          if (!error && data) setResultadosBusqueda(data as CanchaCercana[])
+        })
+    }, 400)
+    return () => clearTimeout(id)
+  }, [busqueda])
+
   async function abrirCancha(c: CanchaCercana) {
     setSeleccionada(c)
+    setFoco({ lat: c.lat, lng: c.lng })
+    setBusqueda('')
+    setResultadosBusqueda([])
+    setPanelRadioAbierto(false)
     setTurnoASenar(null)
     setLoadingTurnos(true)
     const { data: cd } = await supabase.from('canchas').select('*').eq('id', c.id).single()
@@ -54,6 +86,13 @@ export default function PlayerDashboard() {
     const { data: ocupadosData } = await supabase.from('turnos_ocupados').select('*').eq('fecha', fecha)
     setOcupados((ocupadosData as TurnoOcupado[]) ?? [])
     setLoadingTurnos(false)
+  }
+
+  function cerrarPanel() {
+    setSeleccionada(null)
+    setTurnos([])
+    setMensaje(null)
+    setFoco(null)
   }
 
   useEffect(() => {
@@ -121,36 +160,110 @@ export default function PlayerDashboard() {
     }
   }
 
+  const panelDetalleAbierto = !!seleccionada
+
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between bg-primary px-4 py-3 text-white">
-        <h1 className="text-lg font-bold">PartidoYA</h1>
+    <div className="relative h-screen w-full overflow-hidden">
+      <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between bg-primary/95 px-4 py-3 text-white shadow backdrop-blur">
+        <h1 className="text-lg font-bold">PartidoYA ⚽</h1>
         <button onClick={signOut} className="text-sm text-white/80">Salir</button>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-full max-w-sm overflow-y-auto border-r bg-gray-50 p-4 space-y-3">
-          <div>
-            <label className="text-xs text-gray-500">Radio de búsqueda: {radioKm} km</label>
-            <input type="range" min={1} max={50} value={radioKm} onChange={(e) => setRadioKm(Number(e.target.value))} className="w-full" />
+      {/* Mapa a pantalla completa, siempre de fondo */}
+      <div className="absolute inset-0 z-0">
+        {coords ? (
+          <MapView userLat={coords.lat} userLng={coords.lng} canchas={canchas} onSelect={abrirCancha} center={foco ?? undefined} resaltada={seleccionada} />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-gray-100 px-6 text-center text-gray-500">
+            {geoLoading && 'Obteniendo tu ubicación...'}
+            {geoError && `No pudimos acceder a tu ubicación: ${geoError}. Activá el GPS/permiso de ubicación para ver las canchas cercanas.`}
           </div>
+        )}
+      </div>
 
-          {geoLoading && <p className="text-sm text-gray-500">Obteniendo tu ubicación...</p>}
-          {geoError && <p className="text-sm text-red-600">No pudimos acceder a tu ubicación: {geoError}</p>}
-
-          {!seleccionada && canchas.map((c) => (
-            <CourtCard key={c.id} cancha={c} onClick={() => abrirCancha(c)} />
-          ))}
-          {!seleccionada && coords && canchas.length === 0 && (
-            <p className="text-sm text-gray-500">No hay canchas activas cerca. Probá ampliar el radio.</p>
+      {/* Buscador por nombre, flotando sobre el mapa */}
+      {!panelDetalleAbierto && (
+        <div className="absolute left-1/2 top-16 z-20 w-[92%] max-w-md -translate-x-1/2">
+          <input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar cancha por nombre..."
+            className="w-full rounded-full border bg-white px-4 py-2 text-sm shadow-lg"
+          />
+          {busqueda.trim().length >= 2 && (
+            <div className="mt-1 max-h-64 overflow-y-auto rounded-xl bg-white shadow-lg">
+              {buscando && <p className="p-3 text-sm text-gray-400">Buscando...</p>}
+              {!buscando && resultadosBusqueda.length === 0 && (
+                <p className="p-3 text-sm text-gray-400">No se encontraron canchas con ese nombre.</p>
+              )}
+              {resultadosBusqueda.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => abrirCancha(c)}
+                  className="block w-full border-b px-4 py-2 text-left text-sm last:border-0 hover:bg-gray-50"
+                >
+                  <p className="font-semibold">{c.nombre}</p>
+                  <p className="text-xs text-gray-500">{c.direccion}</p>
+                </button>
+              ))}
+            </div>
           )}
+        </div>
+      )}
 
-          {seleccionada && !turnoASenar && (
+      {/* Botón + panel flotante para el radio de búsqueda y la lista de canchas cercanas */}
+      {!panelDetalleAbierto && (
+        <div className="absolute bottom-6 right-4 z-20 flex flex-col items-end gap-2">
+          {panelRadioAbierto && (
+            <div className="max-h-[60vh] w-72 space-y-3 overflow-y-auto rounded-xl bg-white p-4 shadow-2xl">
+              <div>
+                <label className="text-xs text-gray-500">Radio de búsqueda: {radioKm} km</label>
+                <input
+                  type="range" min={1} max={50} value={radioKm}
+                  onChange={(e) => setRadioKm(Number(e.target.value))}
+                  className="w-full"
+                />
+              </div>
+              {geoLoading && <p className="text-sm text-gray-500">Obteniendo tu ubicación...</p>}
+              {geoError && <p className="text-sm text-red-600">No pudimos acceder a tu ubicación: {geoError}</p>}
+              <div className="space-y-2">
+                {canchas.map((c) => (
+                  <CourtCard key={c.id} cancha={c} onClick={() => abrirCancha(c)} />
+                ))}
+                {coords && canchas.length === 0 && (
+                  <p className="text-sm text-gray-500">No hay canchas activas cerca. Probá ampliar el radio.</p>
+                )}
+              </div>
+            </div>
+          )}
+          <button
+            onClick={() => setPanelRadioAbierto((v) => !v)}
+            className="rounded-full bg-white px-4 py-3 text-sm font-semibold text-primary-dark shadow-2xl"
+          >
+            📍 {radioKm} km {canchas.length > 0 ? `· ${canchas.length}` : ''}
+          </button>
+        </div>
+      )}
+
+      {/* Panel de detalle: turnos / señar, se desliza sobre el mapa sin achicarlo */}
+      {seleccionada && (
+        <div className="absolute inset-x-0 bottom-0 z-30 max-h-[78%] overflow-y-auto rounded-t-2xl bg-white p-4 shadow-2xl">
+          {!turnoASenar && (
             <div className="space-y-3">
-              <button onClick={() => { setSeleccionada(null); setTurnos([]); setMensaje(null) }} className="text-sm text-primary-dark">
-                ← Volver
-              </button>
-              <h2 className="font-bold">{seleccionada.nombre}</h2>
+              <div className="flex items-start justify-between">
+                <button onClick={cerrarPanel} className="text-sm text-primary-dark">← Volver al mapa</button>
+              </div>
+              <h2 className="text-lg font-bold">{seleccionada.nombre}</h2>
+              <p className="text-sm text-gray-500">{seleccionada.direccion}</p>
+
+              {canchaCompleta?.fotos && canchaCompleta.fotos.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {canchaCompleta.fotos.map((url, i) => (
+                    <img key={i} src={url} alt="" className="h-28 w-40 shrink-0 rounded-lg object-cover" />
+                  ))}
+                </div>
+              )}
+
               <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-full rounded-lg border px-3 py-2" />
 
               {loadingTurnos && <p className="text-sm text-gray-500">Buscando turnos...</p>}
@@ -187,7 +300,7 @@ export default function PlayerDashboard() {
             <div className="space-y-3">
               <button onClick={() => setTurnoASenar(null)} className="text-sm text-primary-dark">← Volver a los turnos</button>
 
-              <div className="rounded-xl border bg-white p-4 space-y-1">
+              <div className="space-y-1 rounded-xl border bg-white p-4">
                 <h2 className="font-bold">{canchaCompleta.nombre}</h2>
                 <p className="text-sm text-gray-600">
                   {DIAS[new Date(fecha + 'T00:00:00').getDay()].charAt(0).toUpperCase() + DIAS[new Date(fecha + 'T00:00:00').getDay()].slice(1)}, {fecha}
@@ -262,16 +375,8 @@ export default function PlayerDashboard() {
               {mensaje && <p className="text-sm">{mensaje}</p>}
             </div>
           )}
-        </aside>
-
-        <main className="flex-1">
-          {coords ? (
-            <MapView userLat={coords.lat} userLng={coords.lng} canchas={canchas} onSelect={abrirCancha} />
-          ) : (
-            <div className="flex h-full items-center justify-center text-gray-400">Esperando ubicación...</div>
-          )}
-        </main>
-      </div>
+        </div>
+      )}
     </div>
   )
 }

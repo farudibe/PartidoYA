@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { subirComprobante } from '../lib/storage'
+import { subirComprobante, subirFotosCancha } from '../lib/storage'
+import { geocodeDireccion } from '../lib/geocoding'
 import { useAuth } from '../contexts/AuthContext'
-import { ALIAS_PARTIDOYA } from '../types'
+import { ALIAS_PARTIDOYA, PROVINCIAS_ARGENTINA } from '../types'
 import type { Cancha, Turno, PagoCuota } from '../types'
+
+const MIN_FOTOS = 2
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 
@@ -17,11 +20,14 @@ export default function CourtOwnerDashboard() {
   // Formulario de alta de cancha
   const [nombre, setNombre] = useState('')
   const [direccion, setDireccion] = useState('')
+  const [codigoPostal, setCodigoPostal] = useState('')
+  const [provincia, setProvincia] = useState('')
   const [cantidadCanchas, setCantidadCanchas] = useState(1)
-  const [lat, setLat] = useState('')
-  const [lng, setLng] = useState('')
   const [aliasTransferencia, setAliasTransferencia] = useState('')
   const [mpLinkPago, setMpLinkPago] = useState('')
+  const [fotos, setFotos] = useState<File[]>([])
+  const [creandoCancha, setCreandoCancha] = useState(false)
+  const [errorCancha, setErrorCancha] = useState<string | null>(null)
 
   // Formulario de nuevo turno
   const [numeroCancha, setNumeroCancha] = useState(1)
@@ -61,17 +67,47 @@ export default function CourtOwnerDashboard() {
   async function crearCancha(e: React.FormEvent) {
     e.preventDefault()
     if (!user) return
-    const { error } = await supabase.from('canchas').insert({
-      owner_id: user.id,
-      nombre,
-      direccion,
-      cantidad_canchas: cantidadCanchas,
-      ubicacion: `SRID=4326;POINT(${lng} ${lat})`,
-      alias_transferencia: aliasTransferencia || null,
-      mp_link_pago: mpLinkPago || null,
-      status: 'pendiente',
-    })
-    if (!error) cargarTodo()
+    if (fotos.length < MIN_FOTOS) {
+      setErrorCancha(`Tenés que adjuntar al menos ${MIN_FOTOS} fotos de la cancha.`)
+      return
+    }
+    setErrorCancha(null)
+    setCreandoCancha(true)
+    try {
+      // 1) Convertimos la dirección que cargó el dueño en lat/lng automáticamente
+      const ubicacion = await geocodeDireccion(direccion, codigoPostal, provincia)
+      if (!ubicacion) {
+        setErrorCancha('No pudimos ubicar esa dirección en el mapa. Revisá que la dirección, el código postal y la provincia estén bien escritos.')
+        return
+      }
+
+      // 2) Subimos las fotos
+      const urlsFotos = await subirFotosCancha(fotos, `cancha-${user.id}`)
+
+      // 3) Creamos la cancha ya con la ubicación calculada
+      const { error } = await supabase.from('canchas').insert({
+        owner_id: user.id,
+        nombre,
+        direccion,
+        codigo_postal: codigoPostal,
+        provincia,
+        cantidad_canchas: cantidadCanchas,
+        ubicacion: `SRID=4326;POINT(${ubicacion.lng} ${ubicacion.lat})`,
+        alias_transferencia: aliasTransferencia || null,
+        mp_link_pago: mpLinkPago || null,
+        fotos: urlsFotos,
+        status: 'pendiente',
+      })
+      if (error) {
+        setErrorCancha('No se pudo crear el predio: ' + error.message)
+      } else {
+        cargarTodo()
+      }
+    } catch (err) {
+      setErrorCancha(err instanceof Error ? err.message : 'Ocurrió un error inesperado.')
+    } finally {
+      setCreandoCancha(false)
+    }
   }
 
   async function agregarTurno(e: React.FormEvent) {
@@ -127,13 +163,39 @@ export default function CourtOwnerDashboard() {
           <form onSubmit={crearCancha} className="space-y-3 rounded-xl bg-white p-6 shadow">
             <h2 className="text-lg font-bold">Registrá tu predio</h2>
             <input required placeholder="Nombre del predio" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full rounded-lg border px-3 py-2" />
-            <input required placeholder="Dirección" value={direccion} onChange={(e) => setDireccion(e.target.value)} className="w-full rounded-lg border px-3 py-2" />
+            <input required placeholder="Dirección (calle y número)" value={direccion} onChange={(e) => setDireccion(e.target.value)} className="w-full rounded-lg border px-3 py-2" />
             <div className="grid grid-cols-2 gap-3">
-              <input required type="number" step="any" placeholder="Latitud" value={lat} onChange={(e) => setLat(e.target.value)} className="rounded-lg border px-3 py-2" />
-              <input required type="number" step="any" placeholder="Longitud" value={lng} onChange={(e) => setLng(e.target.value)} className="rounded-lg border px-3 py-2" />
+              <input required placeholder="Código postal" value={codigoPostal} onChange={(e) => setCodigoPostal(e.target.value)} className="rounded-lg border px-3 py-2" />
+              <select required value={provincia} onChange={(e) => setProvincia(e.target.value)} className="rounded-lg border px-3 py-2">
+                <option value="" disabled>Provincia</option>
+                {PROVINCIAS_ARGENTINA.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
             </div>
             <input required type="number" min={1} placeholder="Cantidad de canchas" value={cantidadCanchas} onChange={(e) => setCantidadCanchas(Number(e.target.value))} className="w-full rounded-lg border px-3 py-2" />
-            <p className="text-xs text-gray-500">Tip: podés obtener lat/lng buscando tu dirección en Google Maps o OpenStreetMap y copiando las coordenadas.</p>
+            <p className="text-xs text-gray-500">Con la dirección, el código postal y la provincia ubicamos tu predio automáticamente en el mapa — no hace falta que sepas la latitud/longitud.</p>
+
+            <hr />
+            <div>
+              <p className="text-sm font-semibold">Fotos de la cancha</p>
+              <p className="text-xs text-gray-500 mb-1">Subí al menos {MIN_FOTOS} fotos del predio.</p>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => setFotos(Array.from(e.target.files ?? []))}
+                className="w-full text-sm"
+              />
+              {fotos.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {fotos.map((f, i) => (
+                    <img key={i} src={URL.createObjectURL(f)} alt="" className="h-16 w-16 rounded-lg object-cover" />
+                  ))}
+                </div>
+              )}
+              {fotos.length > 0 && fotos.length < MIN_FOTOS && (
+                <p className="mt-1 text-xs text-amber-600">Faltan {MIN_FOTOS - fotos.length} foto(s) más.</p>
+              )}
+            </div>
 
             <hr />
             <p className="text-sm font-semibold">Datos para que los jugadores te paguen la seña</p>
@@ -141,7 +203,11 @@ export default function CourtOwnerDashboard() {
             <input placeholder="Link de pago de Mercado Pago (opcional, si tenés)" value={mpLinkPago} onChange={(e) => setMpLinkPago(e.target.value)} className="w-full rounded-lg border px-3 py-2" />
             <p className="text-xs text-gray-500">Si cargás el link de Mercado Pago, el jugador va a pagar ahí directo. Si no, va a ver tu alias y va a subir el comprobante de la transferencia.</p>
 
-            <button className="w-full rounded-lg bg-primary py-2 font-semibold text-white">Crear predio</button>
+            {errorCancha && <p className="text-sm text-red-600">{errorCancha}</p>}
+
+            <button disabled={creandoCancha} className="w-full rounded-lg bg-primary py-2 font-semibold text-white disabled:opacity-50">
+              {creandoCancha ? 'Ubicando predio y subiendo fotos...' : 'Crear predio'}
+            </button>
           </form>
         ) : (
           <>
@@ -150,7 +216,15 @@ export default function CourtOwnerDashboard() {
                 <h2 className="text-lg font-bold">{cancha.nombre}</h2>
                 <EstadoBadge status={cancha.status} />
               </div>
-              <p className="text-sm text-gray-500">{cancha.direccion}</p>
+              <p className="text-sm text-gray-500">{cancha.direccion}{cancha.provincia ? `, ${cancha.provincia}` : ''}</p>
+
+              {cancha.fotos && cancha.fotos.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {cancha.fotos.map((url, i) => (
+                    <img key={i} src={url} alt="" className="h-20 w-28 shrink-0 rounded-lg object-cover" />
+                  ))}
+                </div>
+              )}
 
               {cancha.status !== 'activa' && (
                 <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 space-y-3">
