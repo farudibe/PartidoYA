@@ -17,11 +17,14 @@ export interface Cancha {
   owner_id: string
   nombre: string
   direccion: string
+  codigo_postal?: string | null
+  provincia?: string | null
   descripcion?: string | null
   cantidad_canchas: number
   status: CanchaStatus
   alias_transferencia?: string | null
   mp_link_pago?: string | null
+  fotos?: string[] | null
   created_at?: string
 }
 
@@ -31,10 +34,20 @@ export interface CanchaCercana {
   direccion: string
   descripcion: string | null
   cantidad_canchas: number
-  distancia_km: number
+  // null cuando la cancha viene de la búsqueda por nombre (no hay radio de referencia)
+  distancia_km: number | null
   lat: number
   lng: number
+  fotos?: string[] | null
 }
+
+// Provincias de Argentina, para el select del alta de cancha
+export const PROVINCIAS_ARGENTINA = [
+  'Buenos Aires', 'CABA', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes',
+  'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones',
+  'Neuquén', 'Río Negro', 'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe',
+  'Santiago del Estero', 'Tierra del Fuego', 'Tucumán',
+]
 
 export interface Turno {
   id: string
