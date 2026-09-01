@@ -17,10 +17,11 @@ const userIcon = new L.DivIcon({
   iconSize: [16, 16],
 })
 
-function Recenter({ lat, lng }: { lat: number; lng: number }) {
+function Recenter({ lat, lng, zoom }: { lat: number; lng: number; zoom?: number }) {
   const map = useMap()
   useEffect(() => {
-    map.setView([lat, lng], map.getZoom())
+    map.setView([lat, lng], zoom ?? map.getZoom())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng])
   return null
 }
@@ -30,16 +31,25 @@ interface Props {
   userLng: number
   canchas: CanchaCercana[]
   onSelect?: (c: CanchaCercana) => void
+  // Opcional: centra el mapa acá en vez de en la ubicación del usuario.
+  // Se usa cuando el jugador encuentra una cancha por nombre fuera de su radio.
+  center?: { lat: number; lng: number }
+  // Opcional: cancha seleccionada que puede no estar en `canchas` (por ej.
+  // un resultado de búsqueda por nombre fuera del radio actual). Si ya está
+  // en `canchas`, no se duplica.
+  resaltada?: CanchaCercana | null
 }
 
-export default function MapView({ userLat, userLng, canchas, onSelect }: Props) {
+export default function MapView({ userLat, userLng, canchas, onSelect, center, resaltada }: Props) {
+  const centro = center ?? { lat: userLat, lng: userLng }
+  const mostrarResaltadaAparte = resaltada && !canchas.some((c) => c.id === resaltada.id)
   return (
-    <MapContainer center={[userLat, userLng]} zoom={13} style={{ height: '100%', width: '100%' }}>
+    <MapContainer center={[centro.lat, centro.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <Recenter lat={userLat} lng={userLng} />
+      <Recenter lat={centro.lat} lng={centro.lng} zoom={center ? 15 : undefined} />
       <Marker position={[userLat, userLng]} icon={userIcon}>
         <Popup>Tu ubicación</Popup>
       </Marker>
@@ -49,7 +59,7 @@ export default function MapView({ userLat, userLng, canchas, onSelect }: Props) 
             <div className="space-y-1">
               <p className="font-semibold">{c.nombre}</p>
               <p className="text-xs text-gray-500">{c.direccion}</p>
-              <p className="text-xs">{c.distancia_km.toFixed(1)} km</p>
+              {c.distancia_km != null && <p className="text-xs">{c.distancia_km.toFixed(1)} km</p>}
               {onSelect && (
                 <button onClick={() => onSelect(c)} className="mt-1 rounded bg-primary px-2 py-1 text-xs text-white">
                   Ver turnos
@@ -59,6 +69,16 @@ export default function MapView({ userLat, userLng, canchas, onSelect }: Props) 
           </Popup>
         </Marker>
       ))}
+      {mostrarResaltadaAparte && resaltada && (
+        <Marker position={[resaltada.lat, resaltada.lng]}>
+          <Popup>
+            <div className="space-y-1">
+              <p className="font-semibold">{resaltada.nombre}</p>
+              <p className="text-xs text-gray-500">{resaltada.direccion}</p>
+            </div>
+          </Popup>
+        </Marker>
+      )}
     </MapContainer>
   )
 }
