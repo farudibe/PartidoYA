@@ -22,7 +22,9 @@ export default function CourtOwnerDashboard() {
   const [direccion, setDireccion] = useState('')
   const [codigoPostal, setCodigoPostal] = useState('')
   const [provincia, setProvincia] = useState('')
-  const [cantidadCanchas, setCantidadCanchas] = useState(1)
+  // Por ahora cada predio tiene 1 sola cancha; si más adelante hace falta
+  // manejar varias, se puede volver a exponer este campo en el formulario.
+  const cantidadCanchas = 1
   const [aliasTransferencia, setAliasTransferencia] = useState('')
   const [mpLinkPago, setMpLinkPago] = useState('')
   const [fotos, setFotos] = useState<File[]>([])
@@ -171,7 +173,6 @@ export default function CourtOwnerDashboard() {
                 {PROVINCIAS_ARGENTINA.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <input required type="number" min={1} placeholder="Cantidad de canchas" value={cantidadCanchas} onChange={(e) => setCantidadCanchas(Number(e.target.value))} className="w-full rounded-lg border px-3 py-2" />
             <p className="text-xs text-gray-500">Con la dirección, el código postal y la provincia ubicamos tu predio automáticamente en el mapa — no hace falta que sepas la latitud/longitud.</p>
 
             <hr />
