@@ -16,7 +16,10 @@ export function useGeolocation() {
       setLoading(false)
       return
     }
-    navigator.geolocation.getCurrentPosition(
+    // watchPosition en vez de getCurrentPosition: así la ubicación se
+    // actualiza sola si el usuario se mueve, en lugar de quedar fija en
+    // la primera lectura ("en tiempo real").
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude })
         setLoading(false)
@@ -27,6 +30,8 @@ export function useGeolocation() {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     )
+
+    return () => navigator.geolocation.clearWatch(watchId)
   }, [])
 
   return { coords, error, loading }
