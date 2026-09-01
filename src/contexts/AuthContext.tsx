@@ -7,10 +7,12 @@ interface AuthContextValue {
   user: User | null
   profile: Profile | null
   loading: boolean
-  signUp: (email: string, password: string, nombre: string, role: Rol) => Promise<{ error: string | null }>
+  signUp: (email: string, password: string, nombre: string, role: Rol) => Promise<{ error: string | null; needsConfirmation: boolean }>
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
+  resetPassword: (email: string) => Promise<{ error: string | null }>
+  updatePassword: (password: string) => Promise<{ error: string | null }>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -44,22 +46,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  // El perfil ya NO se inserta desde el cliente: lo crea automáticamente
+  // un trigger en la base (handle_new_user, ver supabase/schema.sql) a
+  // partir de los metadatos (nombre, role) que mandamos acá. Así evitamos
+  // el error de RLS que pasaba cuando la confirmación de email está
+  // activada (en ese caso todavía no hay sesión al momento del signUp,
+  // y el insert directo desde el cliente queda bloqueado por RLS).
   async function signUp(email: string, password: string, nombre: string, role: Rol) {
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (error) return { error: error.message }
-    if (data.user) {
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({ id: data.user.id, nombre, role })
-      if (profileError) return { error: profileError.message }
-      await loadProfile(data.user.id)
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { nombre, role } },
+    })
+    if (error) return { error: error.message, needsConfirmation: false }
+
+    // Si Supabase no devuelve sesión, significa que la confirmación de
+    // email está activada y la cuenta todavía no está confirmada.
+    if (data.user && !data.session) {
+      return { error: null, needsConfirmation: true }
     }
-    return { error: null }
+
+    if (data.user) await loadProfile(data.user.id)
+    return { error: null, needsConfirmation: false }
   }
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    return { error: error ? error.message : null }
+    if (!error) return { error: null }
+    if (error.message.toLowerCase().includes('email not confirmed')) {
+      return { error: 'Confirmá tu email antes de iniciar sesión. Revisá tu bandeja de entrada (y la carpeta de spam).' }
+    }
+    if (error.message.toLowerCase().includes('invalid login credentials')) {
+      return { error: 'Email o contraseña incorrectos.' }
+    }
+    return { error: error.message }
   }
 
   async function signOut() {
@@ -70,8 +90,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) await loadProfile(user.id)
   }
 
+  async function resetPassword(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/restablecer`,
+    })
+    return { error: error ? error.message : null }
+  }
+
+  async function updatePassword(password: string) {
+    const { error } = await supabase.auth.updateUser({ password })
+    return { error: error ? error.message : null }
+  }
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signUp, signIn, signOut, refreshProfile }}>
+    <AuthContext.Provider
+      value={{ user, profile, loading, signUp, signIn, signOut, refreshProfile, resetPassword, updatePassword }}
+    >
       {children}
     </AuthContext.Provider>
   )
