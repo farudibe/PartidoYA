@@ -7,6 +7,7 @@ interface AuthContextValue {
   user: User | null
   profile: Profile | null
   loading: boolean
+  profileLoading: boolean
   signUp: (email: string, password: string, nombre: string, role: Rol) => Promise<{ error: string | null; needsConfirmation: boolean }>
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
@@ -21,16 +22,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  // Loading del PERFIL, separado del loading de sesión. Es clave para que
+  // ProtectedRoute no compare `profile?.role` contra el rol pedido antes de
+  // que el perfil haya terminado de llegar de Supabase: si lo hiciera,
+  // profile todavía sería null en ese instante y el chequeo de rol fallaría
+  // siempre, mandando al usuario de vuelta a "/" justo después de loguearse.
+  const [profileLoading, setProfileLoading] = useState(true)
 
   async function loadProfile(userId: string) {
+    setProfileLoading(true)
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
     setProfile(data as Profile | null)
+    setProfileLoading(false)
   }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
-      if (session?.user) loadProfile(session.user.id)
+      if (session?.user) {
+        loadProfile(session.user.id)
+      } else {
+        setProfileLoading(false)
+      }
       setLoading(false)
     })
 
@@ -40,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadProfile(session.user.id)
       } else {
         setProfile(null)
+        setProfileLoading(false)
       }
     })
 
@@ -104,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, signUp, signIn, signOut, refreshProfile, resetPassword, updatePassword }}
+      value={{ user, profile, loading, profileLoading, signUp, signIn, signOut, refreshProfile, resetPassword, updatePassword }}
     >
       {children}
     </AuthContext.Provider>
