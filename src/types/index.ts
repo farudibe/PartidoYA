@@ -3,12 +3,21 @@ export type CanchaStatus = 'activa' | 'pausada' | 'pendiente'
 export type ReservaStatus = 'señada' | 'confirmada' | 'cancelada' | 'completada'
 export type MetodoPago = 'transferencia' | 'mercadopago'
 export type PagoCuotaStatus = 'en_revision' | 'aprobado' | 'rechazado'
+export type TipoCancha = 'futbol5' | 'futbol8' | 'futbol11'
+
+export const TIPO_CANCHA_LABEL: Record<TipoCancha, string> = {
+  futbol5: 'Fútbol 5',
+  futbol8: 'Fútbol 8',
+  futbol11: 'Fútbol 11',
+}
 
 export interface Profile {
   id: string
   role: Rol
   nombre: string
   telefono?: string | null
+  // Fecha hasta la que dura la prueba gratuita de 30 días (solo dueños de cancha)
+  trial_hasta?: string | null
   created_at?: string
 }
 
@@ -49,9 +58,17 @@ export const PROVINCIAS_ARGENTINA = [
   'Santiago del Estero', 'Tierra del Fuego', 'Tucumán',
 ]
 
+export interface CanchaPredio {
+  id: string
+  predio_id: string
+  tipo: TipoCancha
+  created_at?: string
+}
+
 export interface Turno {
   id: string
   cancha_id: string
+  cancha_predio_id: string | null
   numero_cancha: number
   dia_semana: number | null
   fecha: string | null
@@ -60,6 +77,8 @@ export interface Turno {
   precio: number | null
   sena: number | null
   activo: boolean
+  // Presente cuando se pide el turno con el join a canchas_predio(tipo)
+  canchas_predio?: { tipo: TipoCancha } | null
 }
 
 export interface Reserva {
