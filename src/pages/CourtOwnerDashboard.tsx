@@ -3,17 +3,18 @@ import { supabase } from '../lib/supabaseClient'
 import { subirComprobante, subirFotosCancha } from '../lib/storage'
 import { geocodeDireccion } from '../lib/geocoding'
 import { useAuth } from '../contexts/AuthContext'
-import { ALIAS_PARTIDOYA, PROVINCIAS_ARGENTINA } from '../types'
-import type { Cancha, Turno, PagoCuota } from '../types'
+import { ALIAS_PARTIDOYA, PROVINCIAS_ARGENTINA, TIPO_CANCHA_LABEL } from '../types'
+import type { Cancha, CanchaPredio, Turno, PagoCuota, TipoCancha } from '../types'
 
 const MIN_FOTOS = 2
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 
 export default function CourtOwnerDashboard() {
-  const { user, signOut } = useAuth()
+  const { user, profile, signOut } = useAuth()
   const [cancha, setCancha] = useState<Cancha | null>(null)
   const [ultimoPago, setUltimoPago] = useState<PagoCuota | null>(null)
+  const [canchasPredio, setCanchasPredio] = useState<CanchaPredio[]>([])
   const [turnos, setTurnos] = useState<Turno[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -31,8 +32,12 @@ export default function CourtOwnerDashboard() {
   const [creandoCancha, setCreandoCancha] = useState(false)
   const [errorCancha, setErrorCancha] = useState<string | null>(null)
 
+  // Formulario para agregar una cancha individual dentro del predio
+  const [tipoNuevaCancha, setTipoNuevaCancha] = useState<TipoCancha>('futbol5')
+  const [agregandoCanchaPredio, setAgregandoCanchaPredio] = useState(false)
+
   // Formulario de nuevo turno
-  const [numeroCancha, setNumeroCancha] = useState(1)
+  const [canchaPredioSeleccionada, setCanchaPredioSeleccionada] = useState('')
   const [diaSemana, setDiaSemana] = useState(1)
   const [horaInicio, setHoraInicio] = useState('18:00')
   const [horaFin, setHoraFin] = useState('19:00')
@@ -58,13 +63,39 @@ export default function CourtOwnerDashboard() {
         .order('created_at', { ascending: false })
         .limit(1)
       setUltimoPago((pagos?.[0] as PagoCuota) ?? null)
-      const { data: turnosData } = await supabase.from('turnos').select('*').eq('cancha_id', canchaData.id).order('dia_semana')
+      const { data: canchasPredioData } = await supabase
+        .from('canchas_predio')
+        .select('*')
+        .eq('predio_id', canchaData.id)
+        .order('created_at')
+      setCanchasPredio((canchasPredioData as CanchaPredio[]) ?? [])
+      const { data: turnosData } = await supabase
+        .from('turnos')
+        .select('*, canchas_predio(tipo)')
+        .eq('cancha_id', canchaData.id)
+        .order('dia_semana')
       setTurnos((turnosData as Turno[]) ?? [])
     }
     setLoading(false)
   }
 
   useEffect(() => { cargarTodo() }, [user])
+
+  // Si la cancha seleccionada para cargar turnos ya no existe (o todavía no
+  // eligió ninguna), la seteamos a la primera disponible automáticamente.
+  useEffect(() => {
+    if (canchasPredio.length === 0) {
+      setCanchaPredioSeleccionada('')
+    } else if (!canchasPredio.some((c) => c.id === canchaPredioSeleccionada)) {
+      setCanchaPredioSeleccionada(canchasPredio[0].id)
+    }
+  }, [canchasPredio])
+
+  // Prueba gratuita de 30 días desde que el dueño se registró
+  const trialActivo = !!profile?.trial_hasta && new Date(profile.trial_hasta) > new Date()
+  const diasRestantesTrial = profile?.trial_hasta
+    ? Math.max(0, Math.ceil((new Date(profile.trial_hasta).getTime() - Date.now()) / 86400000))
+    : 0
 
   async function crearCancha(e: React.FormEvent) {
     e.preventDefault()
@@ -112,12 +143,27 @@ export default function CourtOwnerDashboard() {
     }
   }
 
-  async function agregarTurno(e: React.FormEvent) {
+  async function agregarCanchaPredio(e: React.FormEvent) {
     e.preventDefault()
     if (!cancha) return
+    setAgregandoCanchaPredio(true)
+    try {
+      const { error } = await supabase.from('canchas_predio').insert({
+        predio_id: cancha.id,
+        tipo: tipoNuevaCancha,
+      })
+      if (!error) cargarTodo()
+    } finally {
+      setAgregandoCanchaPredio(false)
+    }
+  }
+
+  async function agregarTurno(e: React.FormEvent) {
+    e.preventDefault()
+    if (!cancha || !canchaPredioSeleccionada) return
     const { error } = await supabase.from('turnos').insert({
       cancha_id: cancha.id,
-      numero_cancha: numeroCancha,
+      cancha_predio_id: canchaPredioSeleccionada,
       dia_semana: diaSemana,
       hora_inicio: horaInicio,
       hora_fin: horaFin,
@@ -215,7 +261,7 @@ export default function CourtOwnerDashboard() {
             <div className="rounded-xl bg-white p-6 shadow space-y-2">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold">{cancha.nombre}</h2>
-                <EstadoBadge status={cancha.status} />
+                <EstadoBadge status={cancha.status} trialActivo={trialActivo} />
               </div>
               <p className="text-sm text-gray-500">{cancha.direccion}{cancha.provincia ? `, ${cancha.provincia}` : ''}</p>
 
@@ -227,7 +273,14 @@ export default function CourtOwnerDashboard() {
                 </div>
               )}
 
-              {cancha.status !== 'activa' && (
+              {trialActivo && (
+                <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+                  🎁 Estás en tu <strong>prueba gratuita</strong>: te quedan <strong>{diasRestantesTrial} día{diasRestantesTrial === 1 ? '' : 's'}</strong>.
+                  Mientras dure, tu predio ya aparece en el mapa de los jugadores aunque todavía no hayas pagado la cuota.
+                </div>
+              )}
+
+              {cancha.status !== 'activa' && !trialActivo && (
                 <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 space-y-3">
                   <p>
                     {cancha.status === 'pendiente' && 'Tu predio todavía no aparece en el mapa de los jugadores. Aboná la cuota mensual para habilitarlo.'}
@@ -292,23 +345,54 @@ export default function CourtOwnerDashboard() {
             </div>
 
             <div className="rounded-xl bg-white p-6 shadow space-y-4">
-              <h2 className="text-lg font-bold">Turnos y horarios</h2>
-              <form onSubmit={agregarTurno} className="grid grid-cols-2 gap-3">
-                <select value={diaSemana} onChange={(e) => setDiaSemana(Number(e.target.value))} className="rounded-lg border px-3 py-2">
-                  {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              <h2 className="text-lg font-bold">Canchas del predio</h2>
+              <p className="text-sm text-gray-500">Este predio puede tener más de una cancha. Agregalas acá antes de cargar turnos.</p>
+              <form onSubmit={agregarCanchaPredio} className="flex gap-2">
+                <select value={tipoNuevaCancha} onChange={(e) => setTipoNuevaCancha(e.target.value as TipoCancha)} className="flex-1 rounded-lg border px-3 py-2">
+                  {(Object.keys(TIPO_CANCHA_LABEL) as TipoCancha[]).map((t) => (
+                    <option key={t} value={t}>{TIPO_CANCHA_LABEL[t]}</option>
+                  ))}
                 </select>
-                <input type="number" min={1} max={cancha.cantidad_canchas} value={numeroCancha} onChange={(e) => setNumeroCancha(Number(e.target.value))} placeholder="N° cancha" className="rounded-lg border px-3 py-2" />
-                <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className="rounded-lg border px-3 py-2" />
-                <input type="time" value={horaFin} onChange={(e) => setHoraFin(e.target.value)} className="rounded-lg border px-3 py-2" />
-                <input type="number" placeholder="Valor total de la cancha" value={precio} onChange={(e) => setPrecio(e.target.value)} className="rounded-lg border px-3 py-2" />
-                <input type="number" placeholder="Valor de la seña" value={sena} onChange={(e) => setSena(e.target.value)} className="rounded-lg border px-3 py-2" />
-                <button className="col-span-2 rounded-lg bg-primary py-2 font-semibold text-white">Agregar turno</button>
+                <button disabled={agregandoCanchaPredio} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {agregandoCanchaPredio ? 'Agregando...' : 'Agregar cancha'}
+                </button>
               </form>
+              <div className="flex flex-wrap gap-2">
+                {canchasPredio.map((c, i) => (
+                  <span key={c.id} className="rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary-dark">
+                    {TIPO_CANCHA_LABEL[c.tipo]} #{i + 1}
+                  </span>
+                ))}
+                {canchasPredio.length === 0 && <p className="text-sm text-gray-500">Todavía no agregaste ninguna cancha.</p>}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white p-6 shadow space-y-4">
+              <h2 className="text-lg font-bold">Turnos y horarios</h2>
+              {canchasPredio.length === 0 ? (
+                <p className="text-sm text-gray-500">Primero agregá al menos una cancha (Fútbol 5, 8 u 11) arriba para poder cargar turnos.</p>
+              ) : (
+                <form onSubmit={agregarTurno} className="grid grid-cols-2 gap-3">
+                  <select value={diaSemana} onChange={(e) => setDiaSemana(Number(e.target.value))} className="rounded-lg border px-3 py-2">
+                    {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                  <select value={canchaPredioSeleccionada} onChange={(e) => setCanchaPredioSeleccionada(e.target.value)} className="rounded-lg border px-3 py-2">
+                    {canchasPredio.map((c, i) => (
+                      <option key={c.id} value={c.id}>{TIPO_CANCHA_LABEL[c.tipo]} #{i + 1}</option>
+                    ))}
+                  </select>
+                  <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className="rounded-lg border px-3 py-2" />
+                  <input type="time" value={horaFin} onChange={(e) => setHoraFin(e.target.value)} className="rounded-lg border px-3 py-2" />
+                  <input type="number" placeholder="Valor total de la cancha" value={precio} onChange={(e) => setPrecio(e.target.value)} className="rounded-lg border px-3 py-2" />
+                  <input type="number" placeholder="Valor de la seña" value={sena} onChange={(e) => setSena(e.target.value)} className="rounded-lg border px-3 py-2" />
+                  <button className="col-span-2 rounded-lg bg-primary py-2 font-semibold text-white">Agregar turno</button>
+                </form>
+              )}
 
               <div className="space-y-2">
                 {turnos.map((t) => (
                   <div key={t.id} className="flex justify-between rounded-lg border p-3 text-sm">
-                    <span>{DIAS[t.dia_semana ?? 0]} · Cancha {t.numero_cancha}</span>
+                    <span>{DIAS[t.dia_semana ?? 0]} · {t.canchas_predio?.tipo ? TIPO_CANCHA_LABEL[t.canchas_predio.tipo] : 'Cancha'}</span>
                     <span>{t.hora_inicio.slice(0, 5)} - {t.hora_fin.slice(0, 5)}{t.sena ? ` · Seña $${t.sena}` : ''}</span>
                   </div>
                 ))}
@@ -322,7 +406,10 @@ export default function CourtOwnerDashboard() {
   )
 }
 
-function EstadoBadge({ status }: { status: Cancha['status'] }) {
+function EstadoBadge({ status, trialActivo }: { status: Cancha['status']; trialActivo: boolean }) {
+  if (status !== 'activa' && trialActivo) {
+    return <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">En prueba gratis</span>
+  }
   const styles = {
     activa: 'bg-green-100 text-green-700',
     pausada: 'bg-red-100 text-red-700',

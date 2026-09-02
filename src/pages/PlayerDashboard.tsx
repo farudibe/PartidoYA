@@ -6,6 +6,7 @@ import { useGeolocation } from '../hooks/useGeolocation'
 import MapView from '../components/MapView'
 import { CourtCard } from '../components/CourtCard'
 import type { CanchaCercana, Turno, TurnoOcupado, Cancha } from '../types'
+import { TIPO_CANCHA_LABEL } from '../types'
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 
@@ -77,7 +78,7 @@ export default function PlayerDashboard() {
     const diaSemana = new Date(fecha + 'T00:00:00').getDay()
     const { data: turnosData } = await supabase
       .from('turnos')
-      .select('*')
+      .select('*, canchas_predio(tipo)')
       .eq('cancha_id', c.id)
       .eq('activo', true)
       .or(`dia_semana.eq.${diaSemana},fecha.eq.${fecha}`)
@@ -276,7 +277,7 @@ export default function PlayerDashboard() {
                       <div>
                         <p className="font-semibold">{t.hora_inicio.slice(0, 5)} - {t.hora_fin.slice(0, 5)}</p>
                         <p className="text-xs text-gray-500">
-                          Cancha {t.numero_cancha}
+                          {t.canchas_predio?.tipo ? TIPO_CANCHA_LABEL[t.canchas_predio.tipo] : 'Cancha'}
                           {t.precio ? ` · Total $${t.precio}` : ''}
                           {t.sena ? ` · Seña $${t.sena}` : ''}
                         </p>
@@ -305,7 +306,7 @@ export default function PlayerDashboard() {
                 <p className="text-sm text-gray-600">
                   {DIAS[new Date(fecha + 'T00:00:00').getDay()].charAt(0).toUpperCase() + DIAS[new Date(fecha + 'T00:00:00').getDay()].slice(1)}, {fecha}
                 </p>
-                <p className="text-sm text-gray-600">{turnoASenar.hora_inicio.slice(0, 5)} - {turnoASenar.hora_fin.slice(0, 5)} · Cancha {turnoASenar.numero_cancha}</p>
+                <p className="text-sm text-gray-600">{turnoASenar.hora_inicio.slice(0, 5)} - {turnoASenar.hora_fin.slice(0, 5)} · {turnoASenar.canchas_predio?.tipo ? TIPO_CANCHA_LABEL[turnoASenar.canchas_predio.tipo] : 'Cancha'}</p>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-center">
                   <div className="rounded-lg bg-gray-100 p-2">
                     <p className="text-xs text-gray-500">Valor total</p>
